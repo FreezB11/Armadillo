@@ -26,8 +26,8 @@ static void save_pgm(const char* path, const uint8_t* gray, int w, int h) {
 static void print_ascii(const uint8_t* gray, int w, int h) {
     const char* shades = " .:-=+*#%@";
     const int shade_count = 10;
-    const int step_x = w / 80;
-    const int step_y = h / 24;
+    const int step_x = w / 40;
+    const int step_y = h / 12;
 
     for (int y = 0; y < h; y += step_y) {
         for (int x = 0; x < w; x += step_x) {
@@ -42,7 +42,7 @@ int main(int argc, char* argv[]) {
     const char* dev = (argc > 1) ? argv[1] : "/dev/video0";
 
     fprintf(stderr, "Opening camera: %s\n", dev);
-    Camera cam(dev, 640, 480);
+    Camera cam(dev, 640*4, 480*4);
 
     // Warm up — discard the first couple of frames.
     // Most cameras return dark or partially-exposed frames right after
