@@ -1,0 +1,16 @@
+// For each pixel: bg[i] = alpha*frame[i] + (1-alpha)*bg[i]
+// foreground_mask[i] = abs(frame[i] - bg[i]) > threshold
+```
+
+**Lucas-Kanade optical flow** — tracks a sparse set of good corners frame-to-frame using an image pyramid + least-squares patch matching. This is just 5×5 matrix solves per point — pure `float` arrays.
+
+**Blob analysis** — connected-component labeling on the foreground mask to find bounding boxes, centroids, and silhouette dimensions. This is a classic union-find flood fill.
+
+The output of your classical CV becomes the **input to your neural net**:
+```
+[cx, cy,          // blob centroid (normalized 0..1)
+ bw, bh,          // bounding box size
+ vx0..vxN,        // optical flow vectors for N tracked points
+ vy0..vyN,
+ aspect_ratio,    // shape hint
+ motion_magnitude] // total movement energy
