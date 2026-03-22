@@ -1,0 +1,61 @@
+Piece 1 — Camera capture (V4L2)
+On Linux, every webcam exposes itself as /dev/video0. The kernel API to talk to it is called V4L2 (Video4Linux2). You open it like a file, tell it the resolution and pixel format you want, ask it to allocate a frame buffer in memory (mmap), then just loop calling ioctl(VIDIOC_DQBUF) to grab the next frame.
+The frame comes back as YUYV (a packed YCbCr format). You only need the Y channel — that's just pixel = data[i * 2] — giving you a pure grayscale image. No library, no dependency. The entire capture module is about 80 lines of C++.
+Why not OpenCV? Because OpenCV is 50MB of shared library. V4L2 is already in the kernel — your binary stays tiny and portable.
+
+Piece 2 — Classical CV (three algorithms)
+This is where you detect that something is moving and where it is, cheaply.
+Background subtraction — You maintain a running average image of the "empty" scene. Every frame you compute |current - background| pixel by pixel. Pixels that differ a lot are foreground (you). Pixels that are similar are background. You threshold this into a binary mask: white = person, black = background. Cost: one pass over the image.
+Lucas-Kanade optical flow — You pick ~100 "good" corner points on your body (high-gradient pixels — edges, joints). For each point, you look at a small 5×5 patch around it and find where that same patch moved in the next frame by solving a tiny least-squares system. This gives you a velocity vector (vx, vy) per tracked point. Cost: 100 small matrix solves per frame.
+Blob analysis — You take the binary mask from background subtraction and run connected-component labeling (flood fill). This finds the bounding box (x, y, w, h) and centroid (cx, cy) of your body silhouette. Cost: one pass over the mask.
+These three together give you: where you are, how you're shaped, and how you're moving — all without any ML.
+
+Piece 3 — Feature vector assembly
+The classical CV output gets packed into a flat float[] array. This is what your neural network sees. Something like:
+[cx, cy,          ← centroid (normalized 0.0–1.0)
+ bw, bh,          ← bounding box size (normalized)
+ aspect,          ← bh/bw shape hint
+ motion_energy,   ← sum of all optical flow magnitudes
+ vx[0..N],        ← per-point flow x components
+ vy[0..N]]        ← per-point flow y components
+With 50 tracked points that's about 106 floats per frame. This is your model's input. It's cheap to compute, has no image data in it, and works identically on any device.
+
+Piece 4 — Data collection
+You run your C++ CV pipeline and save the feature vectors to a CSV file. At the same time you need ground-truth joint positions. The simplest approach: record yourself doing known poses, then label the joint positions manually in a Python script using a simple click-to-label tool. Each row in your dataset is [106 CV features → 34 joint coords (17 joints × x,y)].
+You don't need a massive dataset — 10–20 minutes of varied movement, ~18,000 frames at 15fps, gets you started.
+
+Piece 5 — PyTorch training + export
+You define a small MLP in PyTorch:
+Input(106) → Linear(256) → ReLU → Linear(128) → ReLU → Linear(64) → ReLU → Linear(34)
+Train it with MSE loss on your laptop's GPU via CUDA. Training 20k samples for 100 epochs takes a few minutes. Once trained, you export just the weight tensors as a flat binary file — no PyTorch runtime, no ONNX, just raw float32 numbers in a .bin file.
+The exported file for this architecture is about 130KB. Tiny.
+
+Piece 6 — C++ MLP inference
+You write a Layer struct that holds a weight matrix and bias vector as std::vector<float>. The forward pass is literally:
+for each output neuron:
+    sum = bias
+    for each input:
+        sum += weight * input
+    output = max(0, sum)  ← ReLU
+Your MLP class is just a std::vector<Layer>. You load the .bin file once at startup, then call forward(feature_vector) every frame. No heap allocation in the hot path. On a modern CPU this runs in under 1ms.
+
+Piece 7 — Kalman filter + skeleton display
+Raw MLP output is noisy — joints jump around frame to frame. A Kalman filter models each joint as having a position (x, y) and velocity (vx, vy). It combines the noisy MLP prediction with its own physics-based prediction (where should the joint be based on its last velocity?) to produce a smooth, stable output.
+For display you use the framebuffer directly (write pixels to /dev/fb0) or pipe to a small SDL2 window — drawing lines between connected joints to form the skeleton.
+
+Build order
+The right order is:
+
+Get a frame on screen (Piece 1) — verify your camera works
+Add background subtraction, see a binary mask of yourself (Piece 2)
+Add optical flow, see vectors overlaid (Piece 2 continued)
+Print the feature vector to terminal (Piece 3)
+Build the Python data recorder (Piece 4) — save features to CSV while you move around
+Train the PyTorch model, export weights (Piece 5)
+Load weights in C++, print raw joint positions (Piece 6)
+Add Kalman + draw the skeleton (Piece 7)
+
+Each step is testable independently. You'll have something visible on screen after step 1, and the skeleton working by step 8.
+
+
+this was generated by **CLAUDE**
